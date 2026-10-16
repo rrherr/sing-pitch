@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fast Car Pitch Lane</title>
+<link rel="stylesheet" href="vendor/fonts/fonts.css">
+<style>
+/* Layout: one stage (pitch lane + song overview), with transport, mixer and mic controls in a band below. Dark first: it's an instrument panel. */
+:root {
+  --bg: #111318;
+  --panel: #191c23;
+  --line: #2a2f3a;
+  --fg: #e6e8ee;
+  --muted: #8a92a3;
+  /* hit/miss/target/unscored are checked to stay distinct (CIEDE2000 >= 20) under protan, deutan and tritan simulation */
+  --target: #f3cb7a;   /* sand: the recorded vocal */
+  --mic: #e6e8ee;      /* your live pitch: readout, now-dot, free-sing trail */
+  --unscored: #7a8293; /* you, between the song's notes: not scored */
+  --hit: #72e3ff;      /* sky */
+  --miss: #bf6d56;     /* clay */
+  --key-dark: rgba(255,255,255,0.025);
+  --grid: rgba(255,255,255,0.06);
+  --grid-c: rgba(255,255,255,0.16);
+  --font-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f2f3f6; --panel: #ffffff; --line: #d9dce4; --fg: #1a1d24; --muted: #5d6576;
+    --target: #c38238; --mic: #1a1d24; --hit: #0d76ad; --miss: #901308; --unscored: #b0b5bf;
+    --key-dark: rgba(20,30,60,0.035); --grid: rgba(20,30,60,0.07); --grid-c: rgba(20,30,60,0.2);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f2f3f6; --panel: #ffffff; --line: #d9dce4; --fg: #1a1d24; --muted: #5d6576;
+  --target: #c38238; --mic: #1a1d24; --hit: #0d76ad; --miss: #901308; --unscored: #b0b5bf;
+  --key-dark: rgba(20,30,60,0.035); --grid: rgba(20,30,60,0.07); --grid-c: rgba(20,30,60,0.2);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.45 var(--font-body);
+  padding: 20px 16px 32px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; }
+h1 { font: 700 clamp(26px, 4vw, 38px)/1.05 var(--font-display); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--muted); font-weight: 400; }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+
+.stage { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+#lane { display: block; width: 100%; height: clamp(260px, 52vh, 480px); cursor: crosshair; touch-action: pan-y; }
+#overview { display: block; width: 100%; height: 58px; border-top: 1px solid var(--line); cursor: crosshair; touch-action: pan-y; }
+.readout {
+  position: absolute; top: 10px; right: 12px; display: flex; gap: 18px;
+  font-family: var(--font-data); font-variant-numeric: tabular-nums; pointer-events: none;
+  background: color-mix(in srgb, var(--panel) 82%, transparent); padding: 6px 10px; border-radius: 8px;
+}
+.readout div { display: flex; flex-direction: column; align-items: flex-end; }
+.readout small { font: 500 10px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.readout b { font-size: 22px; font-weight: 500; line-height: 1.15; }
+.readout em { font-style: normal; font-size: 12px; color: var(--muted); }
+#youNote { color: var(--mic); }
+#songNote { color: var(--target); }
+.mode-tag {
+  position: absolute; top: 12px; left: 56px; font: 500 11px/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); pointer-events: none;
+}
+.loading {
+  position: absolute; inset: 0; display: grid; place-items: center; background: var(--panel); color: var(--muted);
+  font-family: var(--font-data); font-size: 13px;
+}
+
+.band { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; }
+.band > .box { flex: 1 1 360px; }
+.band > .box.score { flex: 0 1 auto; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; min-width: 0; }
+.label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+button {
+  font: 500 14px/1 var(--font-body); color: var(--fg); background: transparent; border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--mic); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+button.round { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%; }
+button svg { width: 16px; height: 16px; fill: currentColor; }
+.time { font: 500 15px var(--font-data); font-variant-numeric: tabular-nums; }
+.time span { color: var(--muted); }
+
+.loop { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.loop.on { color: var(--fg); }
+.loop b { font: 500 13px var(--font-data); font-variant-numeric: tabular-nums; }
+
+.fader { display: grid; grid-template-columns: 62px minmax(90px, 1fr) 40px; align-items: center; gap: 8px; flex: 1 1 220px; }
+.fader output { font: 13px var(--font-data); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--fg); }
+#vocalVol { accent-color: var(--target); }
+
+.mic-box { flex-direction: column; align-items: stretch; gap: 10px; }
+.mic-row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.status { font: 12px var(--font-data); color: var(--muted); }
+.status.err { color: var(--miss); }
+.seg { display: inline-flex; align-items: center; gap: 0; }
+.seg .label { margin-right: 10px; }
+.seg button { border-radius: 0; padding: 7px 10px; font: 13px var(--font-data); margin-left: -1px; color: var(--muted); }
+.seg button:first-of-type { border-radius: 8px 0 0 8px; }
+.seg button:last-of-type { border-radius: 0 8px 8px 0; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); position: relative; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.score { display: flex; gap: 22px; }
+.score div { display: flex; flex-direction: column; }
+.score b { font: 500 24px/1.1 var(--font-data); font-variant-numeric: tabular-nums; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; max-width: 70ch; }
+kbd { font: 12px var(--font-data); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Fast Car <span>Tracy Chapman</span></h1>
+    <div class="legend">
+      <span><i style="background:var(--target)"></i>Recorded vocal</span>
+      <span><i style="background:var(--hit)"></i>You, on pitch (any octave)</span>
+      <span><i style="background:var(--miss)"></i>You, off pitch</span>
+      <span><i style="background:var(--unscored)"></i>You, between the song's notes (not scored)</span>
+    </div>
+  </header>
+
+  <section class="stage">
+    <canvas id="lane" aria-label="Pitch lane: recorded vocal and your voice on a note grid. Click to seek, drag to loop a phrase."></canvas>
+    <canvas id="overview" aria-label="Whole song overview. Click to seek, drag to loop a phrase."></canvas>
+    <div class="mode-tag" id="modeTag"></div>
+    <div class="readout">
+      <div><small>You</small><b id="youNote">–</b><em id="youHz">mic off</em></div>
+      <div><small>Song</small><b id="songNote">–</b><em id="songHz">&nbsp;</em></div>
+    </div>
+    <div class="loading" id="loading">Loading stems…</div>
+  </section>
+
+  <div class="band">
+    <div class="box">
+      <button class="round primary" id="play" aria-label="Play" disabled>
+        <svg viewBox="0 0 16 16" id="playIcon"><path d="M4 2.5v11l9-5.5z"/></svg>
+      </button>
+      <button class="round" id="restart" aria-label="Restart from the top" disabled>
+        <svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM14 3v10L6 8z"/></svg>
+      </button>
+      <div class="time" id="time">0:00.0 <span>/ 0:00</span></div>
+      <div class="loop" id="loopBox">
+        <span id="loopText">Drag across the lane or overview to loop a phrase</span>
+        <button id="clearLoop" hidden>Clear loop</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <label class="fader" for="vocalVol"><span class="label">Vocal</span>
+        <input type="range" id="vocalVol" min="0" max="100" value="60"><output id="vocalOut">60%</output></label>
+      <label class="fader" for="backVol"><span class="label">Backing</span>
+        <input type="range" id="backVol" min="0" max="100" value="100"><output id="backOut">100%</output></label>
+    </div>
+
+    <div class="box score" aria-live="off">
+      <div><span class="label">Last 4 s</span><b id="scoreNow">–</b></div>
+      <div><span class="label">This take</span><b id="scoreTake">–</b></div>
+    </div>
+  </div>
+
+  <div class="box mic-box">
+    <div class="mic-row">
+      <button id="micBtn">
+        <svg viewBox="0 0 16 16"><path d="M8 1a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 8 1zM3.5 7.5h1a3.5 3.5 0 0 0 7 0h1a4.5 4.5 0 0 1-4 4.47V14h2v1h-5v-1h2v-2.03a4.5 4.5 0 0 1-4-4.47z"/></svg>
+        <span id="micLabel">Start mic</span>
+      </button>
+      <label class="check"><input type="checkbox" id="ec" checked> Echo cancellation (for speakers)</label>
+      <div class="seg" id="smoothing" role="group" aria-label="Median smoothing for both pitch lines">
+        <span class="label">Smoothing</span>
+        <button data-w="1" aria-pressed="false">Off</button>
+        <button data-w="3" aria-pressed="false" title="3-frame median, 48 ms">48 ms</button>
+        <button data-w="5" aria-pressed="false" title="5-frame median, 80 ms">80 ms</button>
+        <button data-w="7" aria-pressed="false" title="7-frame median, 112 ms">112 ms</button>
+      </div>
+      <label class="fader" for="offset" style="flex: 1 1 300px; grid-template-columns: 92px minmax(90px,1fr) 108px">
+        <span class="label">Mic timing</span>
+        <input type="range" id="offset" min="-200" max="300" step="5" value="0">
+        <output id="offsetOut">auto</output>
+      </label>
+      <span class="status" id="micStatus"></span>
+    </div>
+    <p class="hint">Smoothing applies a median filter to both lines (and the score), removing one- and two-frame glitches; longer windows start flattening vibrato. Your pitch is drawn at its true octave. The score counts a frame as on pitch when you're within 50 cents of the recorded note in any octave, out of all frames where the recording has a sung note. If your line runs consistently early or late against the gold line, nudge <b>Mic timing</b>. Keys: <kbd>Space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> 5 s.</p>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
